@@ -353,7 +353,7 @@
                         <option value="">Select AI service...</option>
                         <option value="chatgpt">ChatGPT</option>
                         <option value="claude">Claude</option>
-                        <option value="gemini">Google Gemini</option>
+                        <option value="gemini">Google Gemini/Bard</option>
                         <option value="bing">Bing Chat/Microsoft Copilot</option>
                         <option value="other">Other AI service</option>
                     </select>
@@ -417,7 +417,7 @@
                 <!-- 5. Weekly Frequency -->
                 <div class="form-group">
                     <label for="weeklyFreq">5. 📅 Weekly Frequency</label>
-                    <div class="helper-text" style="margin-bottom: 15px;">How many similar chats/sessions do you have per week?</div>
+                    <div class="helper-text" style="margin-bottom: 15px;">How many similar sessions per week?</div>
                     <div class="slider-container">
                         <input type="range" id="weeklyFreq" class="slider" min="1" max="25" value="1" step="1">
                         <div class="slider-labels">
@@ -457,7 +457,7 @@
                                 <span class="tier-value" id="energyMonthlyCard">0.3 kWh</span>
                             </div>
                         </div>
-                        <div class="comparison">Monthly = running laptop for 50 hours</div>
+                        <div class="comparison" id="energyComparison">Monthly = running laptop for 50 hours</div>
                         <span class="confidence high">High Confidence ✅</span>
                     </div>
                     
@@ -477,7 +477,7 @@
                                 <span class="tier-value" id="waterMonthlyCard">0.46 L</span>
                             </div>
                         </div>
-                        <div class="comparison">Monthly = about 2 water bottles</div>
+                        <div class="comparison" id="waterComparison">Monthly = about 2 water bottles</div>
                         <span class="confidence medium">Medium Confidence ⚠️</span>
                     </div>
                     
@@ -497,7 +497,7 @@
                                 <span class="tier-value" id="carbonMonthlyCard">134g CO₂</span>
                             </div>
                         </div>
-                        <div class="comparison">Monthly = driving 3.5 miles</div>
+                        <div class="comparison" id="carbonComparison">Monthly = driving 3.5 miles</div>
                         <span class="confidence high">High Confidence ✅</span>
                     </div>
                 </div>
@@ -510,7 +510,7 @@
                             <div>Water: <span id="waterAnnual">5.5 L</span></div>
                             <div>Carbon: <span id="carbonAnnual">1.6kg CO₂</span></div>
                         </div>
-                        <div class="comparison">Like driving 45 miles annually</div>
+                        <div class="comparison" id="annualComparison">Like driving 45 miles annually</div>
                     </div>
                 </div>
 
@@ -610,14 +610,42 @@
                 auto: 1.0         // Default for auto-detected location
             };
             
+            // Regional carbon intensity (kg CO2/kWh) based on location
+            let carbonIntensity = 0.45; // US average default
+            let regionName = "US Average";
+            
+            // If manual entry, try to determine region from zip code or city
+            if (data.location === 'manual') {
+                const locationInput = document.getElementById('manualLocation').value.toLowerCase();
+                regionName = document.getElementById('manualLocation').value;
+                
+                // Simple regional carbon intensity mapping (could be expanded)
+                if (locationInput.includes('california') || locationInput.includes('ca') || 
+                    /^9[0-6]\d{3}/.test(locationInput)) {
+                    carbonIntensity = 0.25; // California - cleaner grid
+                    regionName += " (California grid)";
+                } else if (locationInput.includes('texas') || locationInput.includes('tx') || 
+                          /^7[5-9]\d{3}/.test(locationInput)) {
+                    carbonIntensity = 0.55; // Texas - more carbon intensive
+                    regionName += " (Texas grid)";
+                } else if (locationInput.includes('new york') || locationInput.includes('ny') || 
+                          /^1[0-4]\d{3}/.test(locationInput)) {
+                    carbonIntensity = 0.35; // New York - cleaner than average
+                    regionName += " (New York grid)";
+                } else {
+                    regionName += " (US Average grid)";
+                }
+            } else if (data.location === 'auto') {
+                carbonIntensity = 0.48; // Indiana specific
+                regionName = "Indiana, US (auto-detected)";
+            }
+            
+            const waterFactor = 2.5; // L per kWh (increased based on data center studies)
+            
             // Base calculations per session
             const energyPerQuery = energyFactors[data.usageType] * serviceMultipliers[data.aiService];
             const sessionEnergyWh = data.exchanges * energyPerQuery;
             const sessionEnergyKwh = sessionEnergyWh / 1000;
-            
-            // Regional carbon intensity (kg CO2/kWh) and water factor - Updated
-            const carbonIntensity = 0.45; // US average
-            const waterFactor = 2.5; // L per kWh (increased based on data center studies)
             
             // Calculate session impacts
             const sessionCarbon = sessionEnergyKwh * carbonIntensity * 1000; // grams
@@ -658,18 +686,12 @@
                     carbon: (annualCarbon/1000).toFixed(1),
                     water: annualWater.toFixed(1)
                 }
-            }, data, energyFactors, serviceMultipliers);
+            }, data, energyFactors, serviceMultipliers, carbonIntensity, regionName);
         }
         
-        function updateResults(impacts, formData, energyFactors, serviceMultipliers) {
+        function updateResults(impacts, formData, energyFactors, serviceMultipliers, carbonIntensity, regionName) {
             // Update location display
-            let locationText = "US Average";
-            if (formData.location === 'auto') {
-                locationText = "Indiana, US (auto-detected)";
-            } else if (formData.location === 'manual') {
-                locationText = `${document.getElementById('manualLocation').value}, US`;
-            }
-            document.getElementById('detectedLocation').textContent = locationText;
+            document.getElementById('detectedLocation').textContent = regionName;
             
             // Update session impacts
             document.getElementById('energySession').textContent = impacts.session.energy + ' kWh';
@@ -690,7 +712,33 @@
             document.getElementById('waterAnnual').textContent = impacts.annual.water + ' L';
             document.getElementById('carbonAnnual').textContent = impacts.annual.carbon + 'kg CO₂';
             
-            // Update calculation breakdown
+            // Calculate dynamic comparisons
+            const monthlyEnergyFloat = parseFloat(impacts.monthly.energy);
+            const monthlyWaterFloat = parseFloat(impacts.monthly.water);
+            const monthlyCarbon = parseInt(impacts.monthly.carbon);
+            const annualCarbon = parseFloat(impacts.annual.carbon);
+            
+            // Energy comparison (laptop uses ~60W, so 1 kWh = 16.7 hours)
+            const laptopHours = Math.round(monthlyEnergyFloat * 16.7);
+            document.getElementById('energyComparison').textContent = 
+                `Monthly = running laptop for ${laptopHours} hours`;
+            
+            // Water comparison (standard water bottle = 0.5L)
+            const waterBottles = Math.round(monthlyWaterFloat / 0.5 * 10) / 10;
+            document.getElementById('waterComparison').textContent = 
+                `Monthly = about ${waterBottles} water bottles`;
+            
+            // Carbon comparison (average car emits ~404g CO₂/mile)
+            const drivingMiles = Math.round(monthlyCarbon / 404 * 10) / 10;
+            document.getElementById('carbonComparison').textContent = 
+                `Monthly = driving ${drivingMiles} miles`;
+            
+            // Annual comparison
+            const annualDrivingMiles = Math.round(annualCarbon * 1000 / 404);
+            document.getElementById('annualComparison').textContent = 
+                `Like driving ${annualDrivingMiles} miles annually`;
+            
+            // Update calculation breakdown with confidence indicators
             const breakdown = document.getElementById('calculationBreakdown');
             const energyPerQuery = energyFactors[formData.usageType] * serviceMultipliers[formData.aiService];
             breakdown.innerHTML = `
@@ -699,11 +747,17 @@
                     <li>${formData.exchanges} exchanges × ${formData.usageType} complexity (${energyPerQuery.toFixed(2)} Wh/query)</li>
                     <li>AI Service: ${formData.aiService} (efficiency factor: ${serviceMultipliers[formData.aiService]})</li>
                     <li>Total session energy: ${impacts.session.energy} kWh</li>
-                    <li>Regional carbon intensity: 0.45 kg CO₂/kWh (US average)</li>
+                    <li>Regional carbon intensity: ${carbonIntensity} kg CO₂/kWh (${regionName})</li>
                     <li>Water usage factor: 2.5L per kWh (including data center cooling)</li>
                 </ul>
                 <p><strong>Weekly Scaling:</strong> ${formData.weeklyFreq} sessions per week</p>
-                                        <p><strong>Data Sources:</strong> Energy estimates based on recent research (Chien et al. 2023, Saklani & Singh 2024)</p>
+                <p><strong>Confidence Levels:</strong></p>
+                <ul>
+                    <li><span style="color: #48bb78;">✅ High Confidence:</span> Energy consumption estimates (based on peer-reviewed research), Regional carbon intensity (EPA data)</li>
+                    <li><span style="color: #ed8936;">⚠️ Medium Confidence:</span> Water usage ratios (industry averages), AI service efficiency differences</li>
+                    <li><span style="color: #f56565;">❓ Lower Confidence:</span> Exact regional variations, Data center routing specifics</li>
+                </ul>
+                <p><strong>Data Sources:</strong> Energy estimates based on recent research (Chien et al. 2023, Saklani & Singh 2024)</p>
             `;
         }
     </script>
